@@ -14,7 +14,7 @@ library(GGally)
 library(tinytex)
 ```
 
-```{r include=FALSE}
+```{r}
 baseballGames <- read_csv("Data/BaseballGames.csv")
 dailyTeamStandings <- read_csv("Data/DailyTeamStandings.csv")
 glossary <- read_xlsx("Data/Glossary.xlsx")
@@ -28,7 +28,7 @@ venueCapacities <- read_xlsx("Data/MLB Venue Capacities.xlsx")
   
   **Alternative Hypothesis:** The model is statistically significant for predicting the percentage of filled capacity for each MLB team's venue.
   
-```{r include=FALSE}
+```{r}
 # Split up the date to specify the month and year each game occurred in
 baseballGames$month = str_split(baseballGames$Game_Time_Local, "/")
 baseballGames$year = str_split(baseballGames$Game_Time_Local, "/")
@@ -195,14 +195,14 @@ ggpairs(teamStandings_aug_sep[,c("capacity_percentage","Place")],
   
   Based on the first linear regression model, we can gather that a 0.1 unit or 10% increase in win percentage is associated with a predicted increase in the percentage of filled capacity of about 12.7%, on average.
   
-```{r results='hide'}
+```{r}
 initialModel <- lm(capacity_percentage ~ Win_Pct, data = teamStandings_aug_sep)
 summary(initialModel)
 ```
 
   Based on the second linear regression model, we can gather that a 1 unit decrease in a team's division placing numerically (or going up in the division rankings by one spot) is associated with a predicted increase in the percentage of filled capacity of about 7.37%, on average.
 
-```{r results='hide'}
+```{r}
 initialModel2 <- lm(capacity_percentage ~ Place, data = teamStandings_aug_sep)
 summary(initialModel2)
 ```
@@ -220,7 +220,7 @@ summary(combinedModel)
 vif(combinedModel)
 ```
 
-```{r include=FALSE}
+```{r}
 # Manipulation to make the Games_Back column available to be used in the model
 teamStandings_aug_sep["Games_Back"][teamStandings_aug_sep["Games_Back"] == "-"] <- "0"
 teamStandings_aug_sep$Games_Back <- as.numeric(teamStandings_aug_sep$Games_Back)
@@ -275,7 +275,7 @@ plot(density(combinedModel2$residuals))
 
   **Outliers:** Based on the previous plots, we can conclude that yes, the assumptions have been met with the slight exception of multicollinearity and what seems like an outlier issue. Below, I created box and scatter plots of the model's residuals revealing many outliers. These plots have helped to identify and confirm our theory from the assumption plots that there are outliers in our data.
   
-```{r include=FALSE}
+```{r}
 teamStandings_aug_sep <- teamStandings_aug_sep %>% na.omit() %>% 
   mutate(residuals = combinedModel2$residuals)
 outliers <- teamStandings_aug_sep %>% filter(residuals > 40)
@@ -316,20 +316,20 @@ summary(combinedModel3)
 vif(combinedModel3)
 ```
 
-```{r include=FALSE}
+```{r}
 ggpairs(teamStandings_aug_sep[,c("capacity_percentage","Place","Win_Pct","Games_Back","wRC+","Def")], 
         lower = list(continuous = wrap("points", size = 0.01)), diag = list(continuous = "barDiag"))
 ```
 
-```{r include=FALSE}
+```{r}
 plot(combinedModel3, which = 1)
 ```
 
-```{r include=FALSE}
+```{r}
 plot(combinedModel3, which = 2)
 ```
 
-```{r include=FALSE}
+```{r}
 plot(density(combinedModel3$residuals))
 ```
 
