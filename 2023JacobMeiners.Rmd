@@ -1,0 +1,358 @@
+---
+title: Business Intelligence and Analytics Project
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message=FALSE,warning=FALSE)
+library(tidyverse)
+library(car)
+library(broom)
+library(readxl)
+library(stringr)
+library(GGally)
+library(tinytex)
+```
+
+```{r include=FALSE}
+baseballGames <- read_csv("Data/BaseballGames.csv")
+dailyTeamStandings <- read_csv("Data/DailyTeamStandings.csv")
+glossary <- read_xlsx("Data/Glossary.xlsx")
+venueCapacities <- read_xlsx("Data/MLB Venue Capacities.xlsx")
+```
+
+### Introduction and Hypothesis
+  My goal for this analysis is to find the degree to which a team's position in the standings and on-field performance impacts their level of home attendance during August and September, historically. The response variable I have chosen to use for this analysis is the average percentage of filled capacity at each MLB stadium for each month and year specified in the data set. (Each year (2017-2019) contains two months in the data set (August and September). The percentage of filled capacity used for each row of data is based on the team's average attendance during the specific month and year specified in the row.) I chose to use the percentage of filled capacity because using attendance alone would not be informative enough. Each team's attendance is relative; if a smaller stadium had the same attendance as a larger stadium, analyzing solely based on attendance would not provide the correct statistical valuation for both stadium's attendance. Utilizing the percentage of filled capacity as the model's response variable will help with the justification of our answers more than game attendance alone.
+  
+  **Null Hypothesis:** The model is not statistically significant for predicting the percentage of filled capacity for each MLB team's venue.
+  
+  **Alternative Hypothesis:** The model is statistically significant for predicting the percentage of filled capacity for each MLB team's venue.
+  
+```{r include=FALSE}
+# Split up the date to specify the month and year each game occurred in
+baseballGames$month = str_split(baseballGames$Game_Time_Local, "/")
+baseballGames$year = str_split(baseballGames$Game_Time_Local, "/")
+
+for (i in 1:nrow(baseballGames)) {
+  baseballGames$month[[i]] = as.numeric(baseballGames$month[[i]][1])
+  baseballGames$year[[i]] = as.numeric(baseballGames$year[[i]][3])
+}
+# Convert to numeric values
+baseballGames <- baseballGames %>% 
+  mutate_at(c("Home_Score","Home_Hits","Home_Errors","Away_Score","Away_Hits","Away_Errors",
+              "Attendance","Temperature"), as.numeric)
+
+# Filter the data to only games in August and September
+aug_sep_games <- baseballGames[baseballGames$month == 8 | baseballGames$month == 9,]
+
+# Manipulate data so joins work better
+venueCapacities$Venue[11] = "Angel Stadium"
+venueCapacities$Venue[8] = "Oakland Coliseum"
+venueCapacities$Capacity = as.numeric(venueCapacities$Capacity)
+
+# Get venue info for each game
+aug_sep_games <- aug_sep_games %>% 
+  inner_join(venueCapacities, by = c("Venue_Name" = "Venue"))
+  
+# Find the percentage of filled capacity for each game
+aug_sep_games <- aug_sep_games %>% mutate(capacity_percentage = round(Attendance / Capacity * 100, 2))
+
+# Find total hits and runs for each month and year for all teams
+totalGames <- aug_sep_games %>% 
+  group_by(Home_Team_Code, month, year) %>% 
+  summarize(tHome_Score = sum(Home_Score), tHome_Hits = sum(Home_Hits))
+
+# Mean stats for each team for both September and August for all three seasons
+aug_sep_games <- aug_sep_games %>% 
+  select(Home_Team_Code, Home_Score, Home_Hits, Home_Errors, Away_Score, Away_Hits, Away_Errors, Attendance, Temperature, month, year, Capacity, capacity_percentage) %>% 
+  group_by(Home_Team_Code, month, year) %>% 
+  summarize(across(.cols = Home_Score:capacity_percentage, .fns = mean), across(.cols = Home_Score:capacity_percentage, .fns = round, 2))
+
+# Score, hit, and error comparisons to the opposing team
+aug_sep_games <- aug_sep_games %>% 
+  mutate(scoreResidual = Home_Score - Away_Score, 
+         hitResidual = Home_Hits - Away_Hits, 
+         errorResidual = Home_Errors - Away_Errors)
+
+# Analyzing Daily Team Standings
+dailyTeamStandings$month = str_split(dailyTeamStandings$Date, "/")
+dailyTeamStandings$Year = str_split(dailyTeamStandings$Date, "/")
+
+for (i in 1:nrow(dailyTeamStandings)) {
+  dailyTeamStandings$month[[i]] = as.numeric(dailyTeamStandings$month[[i]][1])
+  dailyTeamStandings$Year[[i]] = as.numeric(dailyTeamStandings$Year[[i]][3])
+}
+# Filter to August and September
+teamStandings_aug_sep <- dailyTeamStandings[dailyTeamStandings$month == 8 | 
+                                              dailyTeamStandings$month == 9,]
+# Make Win_Pct numeric
+teamStandings_aug_sep$Win_Pct <- as.numeric(teamStandings_aug_sep$Win_Pct)
+
+# Manipulate FLA to MIA
+aug_sep_games$Home_Team_Code[61:66] = "MIA"
+totalGames$Home_Team_Code[61:66] = "MIA"
+
+# Make a dataframe to quickly join
+quickJoin <- aug_sep_games %>% 
+  select(Home_Team_Code, month, year, capacity_percentage)
+
+teamStandings_aug_sep <- teamStandings_aug_sep %>% 
+  inner_join(quickJoin, by = c("Team_Abbrev"="Home_Team_Code","month"="month","Year"="year")) %>% 
+  inner_join(totalGames, by = c("Team_Abbrev"="Home_Team_Code","month"="month","Year"="year"))
+
+teamStandings_aug_sep <- teamStandings_aug_sep %>% 
+  mutate(runResid = Runs - Opponent_Runs, homeRecordResid = Home_Win - Home_Loss) %>% 
+  na.omit()
+
+# Load FanGraphs data
+batting2017 <- read_csv("Data/2017 Batting.csv")
+pitching2017 <- read_csv("Data/2017 Pitching.csv")
+batting2018 <- read_csv("Data/2018 Batting.csv")
+pitching2018 <- read_csv("Data/2018 Pitching.csv")
+batting2019 <- read_csv("Data/2019 Batting.csv")
+pitching2019 <- read_csv("Data/2019 Pitching.csv")
+
+# Adding date variable to join
+batting2017$Date <- "1/2017"
+batting2018$Date <- "1/2018"
+batting2019$Date <- "1/2019"
+pitching2017$Date <- "1/2017"
+pitching2018$Date <- "1/2018"
+pitching2019$Date <- "1/2019"
+
+# Get year variable for joining
+batting2017$Year = str_split(batting2017$Date, "/")
+for (i in 1:30) {
+  batting2017$Year[[i]] = as.numeric(batting2017$Year[[i]][2])
+}
+
+batting2018$Year = str_split(batting2018$Date, "/")
+for (i in 1:30) {
+  batting2018$Year[[i]] = as.numeric(batting2018$Year[[i]][2])
+}
+
+batting2019$Year = str_split(batting2019$Date, "/")
+for (i in 1:30) {
+  batting2019$Year[[i]] = as.numeric(batting2019$Year[[i]][2])
+}
+
+pitching2017$Year = str_split(pitching2017$Date, "/")
+for (i in 1:30) {
+  pitching2017$Year[[i]] = as.numeric(pitching2017$Year[[i]][2])
+}
+
+pitching2018$Year = str_split(pitching2018$Date, "/")
+for (i in 1:30) {
+  pitching2018$Year[[i]] = as.numeric(pitching2018$Year[[i]][2])
+}
+
+pitching2019$Year = str_split(pitching2019$Date, "/")
+for (i in 1:30) {
+  pitching2019$Year[[i]] = as.numeric(pitching2019$Year[[i]][2])
+}
+
+# Join batting and pitching dataframes
+batting <- rbind(batting2017,batting2018,batting2019) %>% 
+  select(Team, Year, WAR, HR, R, RBI, SB, ISO, AVG, wOBA, `wRC+`, BsR, Off, Def) %>% 
+  rename(fWAR_batting = WAR) %>% 
+  arrange(Team)
+pitching <- rbind(pitching2017,pitching2018,pitching2019) %>% 
+  select(Team, Year, W, L, SV, ERA, FIP, WAR) %>% 
+  rename(fWAR_pitching = WAR) %>% 
+  arrange(Team)
+
+# Manipulate Team Codes
+batting$Team[34:36] = "KC"
+pitching$Team[34:36] = "KC"
+batting$Team[67:69] = "SD"
+pitching$Team[67:69] = "SD"
+batting$Team[73:75] = "SF"
+pitching$Team[73:75] = "SF"
+batting$Team[79:81] = "TB"
+pitching$Team[79:81] = "TB"
+batting$Team[88:90] = "WSH"
+pitching$Team[88:90] = "WSH"
+
+# Join both to main data
+teamStandings_aug_sep <- teamStandings_aug_sep %>% 
+  left_join(batting, by = c("Team_Abbrev"="Team", "Year"="Year")) %>% 
+  left_join(pitching, by = c("Team_Abbrev"="Team", "Year"="Year"))
+```
+
+### Analysis
+
+```{r}
+ggpairs(teamStandings_aug_sep[,c("capacity_percentage","Win_Pct")], 
+        lower = list(continuous = wrap("points", size = 0.01)), diag = list(continuous = "barDiag"))
+```
+
+```{r}
+ggpairs(teamStandings_aug_sep[,c("capacity_percentage","Place")], 
+        lower = list(continuous = wrap("points", size = 0.01)), diag = list(continuous = "barDiag"))
+```
+
+  I chose to utilize a multiple linear regression model to identify the impact and significance the chosen explanatory variables have on the percentage of filled capacity at MLB venues. One of the largest difficulties I ran into with this study were its levels of multicollinearity. Much of the statistics gathered in these models were highly significant in explaining the response variable alone, but when paired with others, I ran into issues of variation overlap or high multicollinearity. As a rule of thumb, I used a multicollinearity threshold of five to identify whether or not there is an issue in our model. The main two explanatory variables I knew I needed to identify in our model from the start were win percentage and the team's position in the standings based on their high correlations with our response variable. I ran two simple linear regressions to identify the significance of these variables on their own and to get a better feel for what I'm working with in the form of multiple R-squared values, p-values, and overall model significance. (Code and actual results can be found in the GitHub.)
+  
+  Based on the first linear regression model, we can gather that a 0.1 unit or 10% increase in win percentage is associated with a predicted increase in the percentage of filled capacity of about 12.7%, on average.
+  
+```{r results='hide'}
+initialModel <- lm(capacity_percentage ~ Win_Pct, data = teamStandings_aug_sep)
+summary(initialModel)
+```
+
+  Based on the second linear regression model, we can gather that a 1 unit decrease in a team's division placing numerically (or going up in the division rankings by one spot) is associated with a predicted increase in the percentage of filled capacity of about 7.37%, on average.
+
+```{r results='hide'}
+initialModel2 <- lm(capacity_percentage ~ Place, data = teamStandings_aug_sep)
+summary(initialModel2)
+```
+
+  These models confirm that individually, win percentage and placing in the team's division standings significantly affect the percentage of filled capacity at home games. Putting them together into a multiple linear regression is the next step, along with testing other possible explanatory variables, as well. In my process of testing other explanatory variables in search of a more informative model, I found that many offensive statistics coincided with high multicollinearity values when added with win percentage. I attempted models without win percentage as well, but was not successful in finding a better model fit. The multicollinearity results below highlight one of these tests and its high levels of multicollinearity. 
+
+```{r}
+combinedModel <- lm(capacity_percentage ~ Place + Win_Pct + `wRC+` + fWAR_batting, 
+                    data = teamStandings_aug_sep)
+summary(combinedModel)
+```
+
+```{r}
+# Multicollinearity
+vif(combinedModel)
+```
+
+```{r include=FALSE}
+# Manipulation to make the Games_Back column available to be used in the model
+teamStandings_aug_sep["Games_Back"][teamStandings_aug_sep["Games_Back"] == "-"] <- "0"
+teamStandings_aug_sep$Games_Back <- as.numeric(teamStandings_aug_sep$Games_Back)
+```
+
+### Final Model and Results
+  I found this combination of explanatory variables from the data set provides the best insight into explaining the impact that a team's on-field performance and position in the standings has on its level of home attendance during August and September, historically. The combination of a team's placing in their division standings, win percentage, the number of games back of the division lead, a team's season total in Fielding Independent Pitching (FIP) measuring pitcher effectiveness, and a team's season total in defensive runs above average (Def) all significantly affect the team's average percentage of filled capacity.
+  
+  **Results:**
+  A 1 unit decrease in a team's division placing numerically (or going up in the division rankings by one spot) is associated with an average increase in the percentage of filled capacity by 1.88%, after accounting for all other explanatory variables.
+  
+  A 0.1 unit or 10% increase in win percentage is associated with an average increase in the percentage of filled capacity by 4.01%, after accounting for all other explanatory variables.
+  
+  A 1 unit decrease in the number of games a team is behind in their division numerically (or going up in the division rankings by 1 game) is associated with an average increase in the percentage of filled capacity by 0.25%, after accounting for all other explanatory variables.
+  
+  A 1 point increase in a team's FIP is associated with an average decrease in the percentage of filled capacity by 3.67%, after accounting for all other explanatory variables.
+  
+  A 1 run increase in a team's defensive runs above average (Def) is associated with an average increase in the percentage of filled capacity by 0.08%, after accounting for all other explanatory variables.
+  
+  **Caveats:** This model is highly statistically significant, represented by the F-Statistic and overall p-value, however, our multiple R-squared value is not where we would like it to be for an overall model as it currently sits at a value of 0.3972. In the remaining portion of this analysis, I explore ways to help that multiple R-squared value increase and understand what is holding it back. The implications of the remaining multiple R-squared value will be analyzed later on. Lastly, there is a bit of a multicollinearity issue in this model, however, the multicollinearity is very minimal as the win percentage variable is just above the threshold of five. With this in mind, I decided to note this issue but continue on with the analysis as multicollinearity will almost always be present to some degree. The impact of the additional variables in this model do more explanatory justice to the model than if I were to remove them due to a slight multicollinearity issue.
+
+```{r}
+combinedModel2 <- lm(capacity_percentage ~ Place + Win_Pct + Games_Back + FIP + Def, 
+                     data = teamStandings_aug_sep)
+summary(combinedModel2)
+```
+
+```{r}
+# Multicollinearity
+vif(combinedModel2)
+```
+
+### Assumptions
+**Linearity and Equal Variance:**
+  The linearity assumption is met as each explanatory variable has a significant correlation with the average percentage of filled capacity as seen below by both the correlations in the top row and their respective scatter plots in the first column. Conversely, there does not seem to be any noticeable correlation in the values of the model's residuals vs its fitted values plot as they are fairly randomly separated, yet there is an unnatural placement of multiple points in the top left leading me to assume we may have some form of distinct outlier values in the model.
+
+```{r echo=FALSE, fig.show='hold', message=FALSE, warning=FALSE, out.width="50%"}
+ggpairs(teamStandings_aug_sep[,c("capacity_percentage","Place","Win_Pct","Games_Back","Home_Loss","FIP","Def")], 
+        lower = list(continuous = wrap("points", size = 0.01)), diag = list(continuous = "barDiag"))
+
+plot(combinedModel2, which = 1)
+```
+
+\newpage
+**Normality:**
+  Based on the Q-Q and density plots below, we do see a fairly normal distribution that is acceptable for our analysis, yet there is a jump in points plotted at the top right of the Q-Q plot, also alluding to the suspected outliers described previously.
+
+```{r fig.dim=c(6,4), echo=FALSE, fig.show='hold', out.width="50%"}
+plot(combinedModel2, which = 2)
+plot(density(combinedModel2$residuals))
+```
+
+  **Outliers:** Based on the previous plots, we can conclude that yes, the assumptions have been met with the slight exception of multicollinearity and what seems like an outlier issue. Below, I created box and scatter plots of the model's residuals revealing many outliers. These plots have helped to identify and confirm our theory from the assumption plots that there are outliers in our data.
+  
+```{r include=FALSE}
+teamStandings_aug_sep <- teamStandings_aug_sep %>% na.omit() %>% 
+  mutate(residuals = combinedModel2$residuals)
+outliers <- teamStandings_aug_sep %>% filter(residuals > 40)
+```
+
+```{r echo=FALSE, fig.show='hold', out.width="50%"}
+# Find possible outliers
+ggplot(data = combinedModel2, aes(y = combinedModel2$residuals)) +
+  geom_boxplot() + ylab("Residuals")
+
+# Map residuals to visualize the outliers compared to the rest of the data
+teamStandings_aug_sep %>% 
+  ggplot(aes(x = capacity_percentage, y = residuals)) +
+  geom_point(alpha = 0.3) +
+  geom_hline(yintercept = 0, linetype = 3) +
+  geom_point(data = outliers, color = "orange") +
+  annotate("text", x = 84, y = 43, label = "San Francisco Giants", col = "orange") +
+  labs(x = "Fitted Values", y = "Residual", title = "Residual Plot")
+```
+
+  These outliers all interestingly consist of the San Francisco Giants organization. After examination, the Giants' win percentage sits around 39%, yet they still have an average percentage of filled capacity of over 90% at the time. How can this be? There is more to the story for what attracts larger crowds in the MLB and we know this is true due to our insufficient multiple R-squared value (this is explored further on the last page), however, these outliers are significantly different than the rest of the data. Due to this, I decided to run this model again, but with these outliers removed.
+
+```{r include=FALSE}
+# Data set with no outliers
+teamStandings_aug_sep_no_outliers <- teamStandings_aug_sep %>% 
+  filter(residuals < 40)
+```
+
+  The newly filtered model is run and surprisingly, the FIP variable is now insignificant. Further analysis could be performed to fully understand why that variable is no longer statistically significant, but for now, I have decided to remove it from the regression. As you can see below, our multiple R-squared value has increased by a fair amount to a value of 0.4502, our multicollinearity issue has subsided a bit, and all of our assumptions have been met much more convincingly. (The assumption plots have been removed to stay within the limits of the file length, but can be seen in the GitHub if needed.)
+
+```{r}
+combinedModel3 <- lm(capacity_percentage ~ Place + Win_Pct + Games_Back + Def, 
+                     data = teamStandings_aug_sep_no_outliers)
+summary(combinedModel3)
+```
+
+```{r}
+vif(combinedModel3)
+```
+
+```{r include=FALSE}
+ggpairs(teamStandings_aug_sep[,c("capacity_percentage","Place","Win_Pct","Games_Back","wRC+","Def")], 
+        lower = list(continuous = wrap("points", size = 0.01)), diag = list(continuous = "barDiag"))
+```
+
+```{r include=FALSE}
+plot(combinedModel3, which = 1)
+```
+
+```{r include=FALSE}
+plot(combinedModel3, which = 2)
+```
+
+```{r include=FALSE}
+plot(density(combinedModel3$residuals))
+```
+
+### Conclusion
+  Overall, we can conclude from this multiple linear regression model that we reject the null hypothesis, confirming that there is a statistically significant impact on a team's home attendance during August and September from a team's on-field performance and place in the standings. This conclusion is derived from the the model's overall p-value and F-Statistic, along with the individual p-values and t-scores. All assumptions have been adequately met in the context of the model with a very slight exception of multicollinearity in the win percentage variable, though, I have no worries about that issue making any form of major effect on the model's predictive capabilities if used in the future as it is very minimal. The reinforcement of the assumptions are immensely weighted on the overall value of the model, leaving me with more confidence in its statistical integrity as all were met convincingly. The specific numerical impact that on-field performance and a team's place in the standings has on the percentage of filled capacity at MLB venues during August and September, historically, is highlighted in the final interpretations below.
+  
+  **Final Interpretations:**
+  A 1 unit decrease in a team's division placing numerically (or going up in the division rankings by one spot) is associated with an average increase in the percentage of filled capacity by 2.26%, after accounting for all other explanatory variables.
+  
+  A 0.1 unit or 10% increase in win percentage is associated with an average increase in the percentage of filled capacity by 3.46%, after accounting for all other explanatory variables.
+  
+  A 1 unit decrease in the number of games a team is behind in their division numerically (or going up in the division by 1 game) is associated with an average increase in the percentage of filled capacity by 0.45%, after accounting for all other explanatory variables.
+  
+  A 1 run increase in a team's defensive runs above average (Def) is associated with an average increase in the percentage of filled capacity by 0.06%, after accounting for all other explanatory variables.
+  
+\newpage
+### Additional Information
+  Although we have concluded the statistical significance of this model, the lack of a better multiple R-squared value leads me to believe there is more that can be researched on what exactly impacts home attendance. If given more time and data, I would look to research other factors including weather, the time of year of the game based on the location, the number of all-stars on the roster, number of season ticket holders the organization has, the frequency of theme nights and/or giveaway games, whether current players were close to milestone numbers (like Albert Pujols this past season), and more. A multiple R-squared value of 0.4502 and the interesting outlier of the San Francisco Giants leads me to assume that there is more reasoning behind home attendance than just how well the team is doing. However, we can conclude that a significant portion of the impact on home attendance is due to on-field performance and the team's place in the standings. If I were provided with more time and space to analyze this further, I am confident that I could derive a more significant model explaining the impact in which player performance and other contributing factors mentioned above has on home attendance.
+  
+**Data Wrangling, Manipulation, and Cleaning:**
+  Gathering the data into a data set with the correct grouping and meaningful information available took some wrangling and manipulation from its initial form in which it was given to me. Mainly, I utilized the tidyverse package's data wrangling verbs (group_by() with summarize(), mutate(), filter(), arrange(), etc) and joining functions (inner_join(), left_join(), etc). With that, I also utilized looping statements and the as.numeric() function to manipulate character columns in the dataframes that I needed to be numeric columns. Incorporation of FanGraph's season total statistics for each team was also utilized. The main focuses of the manipulation include the filtration of baseball game data and daily team standing data to August and September only, the separation of each row by its relevant month and year to make it easier to join data sets and interpret the overall data, the creation of our model's response variable, the implementation of teams' season total offensive and defensive statistics through FanGraphs, and the manipulation of in-game statistics to create more informative statistics like residuals of home wins vs home losses or runs scored vs runs allowed. Multiple variables were produced to be possible explanatory variables in future models like offensive totals and residuals. In the final data set used for modeling, I chose to use daily team standings data from August and September (2017-2019) as my base. Attached to that were team specific statistics based on the month and year in each specific row. This data includes team averages from the specific month and year, totals from the specific month and year, and season totals. (Code can be found in the GitHub.)
+
+**Future Paths:**
+  In the future, I would like to examine how these variables translate to the rest of the regular season that is not August or September. I would like to develop an analysis of both periods of time with more historical data than just three years. Comparing these time periods could prove to be beneficial in understanding how to keep a large home crowd as the season comes to a close. Also, having access to more than three years of data would add more significance to the model, allowing for the formulation of more significant correlations in fan behavior, therefore allowing the researcher to make more informed inferences moving forward. My next step in this regression would be to analyze the correlations to determine if there are any possible data transformations we could do to find any improvement in predicting each variable's true impact on the percentage of filled capacity at MLB venues. Research on an individual player level could be highly impactful as well. Sometimes a single player, like Shohei Ohtani, will attract unusually larger crowds, especially on the road. Studying how much a single player or a group of players impacts fan attendance when playing would be influential in understanding season highs and lows in attendance. Lastly, if given more time, I would like to analyze this data when compared to early 2000s baseball. 2017 and 2018 specifically were the two most prolific home run hitting seasons of all time, drawing larger crowds than normal. I would like to research the impact this home run surge has had on MLB attendance as a whole as I believe it was a tipping point in the juiced ball era.
+  
+  
